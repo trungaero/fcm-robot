@@ -1,0 +1,56 @@
+#cloud-config
+# Rendered by Terraform (infra/edge.tf). Values placed here are readable from
+# the instance metadata service, so treat them as bootstrap-only and rotate
+# anything sensitive. Production should fetch secrets from Key Vault at runtime.
+
+hostname: ${hostname}
+manage_etc_hosts: true
+
+write_files:
+  - path: /etc/fcm/edge.env
+    owner: root:root
+    permissions: '0600'
+    content: |
+%{ for key, value in env ~}
+      ${key}=${value}
+%{ endfor ~}
+
+  - path: /usr/local/bin/fcm-bootstrap.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+
+      apt-get update -y
+      apt-get install -y --no-install-recommends ca-certificates curl git jq openssl
+
+      if ! command -v docker >/dev/null 2>&1; then
+        curl -fsSL https://get.docker.com | sh
+      fi
+      systemctl enable --now docker
+
+      mkdir -p /opt/fcm
+      if [ ! -d /opt/fcm/repo/.git ]; then
+        git clone --depth 1 --branch ${repo_branch} ${repo_url} /opt/fcm/repo
+      else
+        git -C /opt/fcm/repo fetch --depth 1 origin ${repo_branch}
+        git -C /opt/fcm/repo reset --hard FETCH_HEAD
+      fi
+
+%{ if tailscale_auth_key != "" ~}
+      # Admin access is VPN-only: SSH is closed to the internet in the NSG.
+      if ! command -v tailscale >/dev/null 2>&1; then
+        curl -fsSL https://tailscale.com/install.sh | sh
+      fi
+      tailscale up --authkey ${tailscale_auth_key} --hostname ${hostname} --ssh
+%{ endif ~}
+
+      cd /opt/fcm/repo/backend
+      docker compose --env-file /etc/fcm/edge.env -f docker-compose.edge.yml up -d --build
+
+runcmd:
+  - [ bash, /usr/local/bin/fcm-bootstrap.sh ]
+
+final_message: "fcm edge ready after $UPTIME seconds"

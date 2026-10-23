@@ -1,0 +1,61 @@
+# L4 SNI routing on 443 (architecture.md §5.3, §12.3).
+# turn.<domain>            -> SFU TURN/TLS listener (passed through, not terminated here)
+# api.<domain>             -> Token API  (TLS terminated here)
+# livekit.<domain>         -> SFU signaling (TLS terminated here)
+#
+# Caddy's HTTP listener is moved to 8443 so layer4 can own 443.
+
+{
+	https_port 8443
+
+	# DEVELOPMENT ONLY. Replace with certificates issued via DNS-01 (ACME) or
+	# mounted certificates; TLS-ALPN/HTTP-01 cannot reach Caddy while layer4
+	# holds port 443.
+	local_certs
+
+	layer4 {
+		:443 {
+			@turn tls sni {$TURN_DOMAIN}
+			route @turn {
+				proxy {$TURN_UPSTREAM}
+			}
+
+			@web tls sni {$API_DOMAIN} {$LIVEKIT_DOMAIN}
+			route @web {
+				proxy 127.0.0.1:8443
+			}
+
+			# Anything else: close. Do not silently forward unknown SNI.
+			route {
+				close
+			}
+		}
+	}
+}
+
+{$API_DOMAIN} {
+	handle /token* {
+		reverse_proxy {$TOKEN_API_UPSTREAM}
+	}
+	handle /v1/token* {
+		reverse_proxy {$TOKEN_API_UPSTREAM}
+	}
+	handle /healthz {
+		respond /healthz 200
+	}
+	respond 404
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$LIVEKIT_DOMAIN} {
+	reverse_proxy {$LIVEKIT_UPSTREAM}
+
+	log {
+		output stdout
+		format json
+	}
+}

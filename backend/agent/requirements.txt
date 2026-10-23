@@ -1,0 +1,4 @@
+# Pin exact versions in a lockfile for reproducible builds.
+# Verify the current release notes before bumping: the agents API is young.
+livekit-agents[openai,silero,turn-detector]==1.2.6
+asyncpg==0.30.0

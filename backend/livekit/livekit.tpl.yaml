@@ -1,0 +1,43 @@
+# Illustrative configuration (architecture.md §12.2).
+# Verify every key against the installed livekit-server release before use.
+# Placeholders (__X__) are filled by docker-entrypoint.sh.
+
+port: 7880
+prometheus_port: 6789
+bind_addresses:
+  - ""
+
+rtc:
+  tcp_port: 7881
+  # Single mux port. Switch to a range (e.g. 50000-60000) at higher concurrency
+  # and mirror the whole range in the NSG.
+  udp_port: 7882
+  use_external_ip: true
+  # Private address advertised to the agent tier (VM 2).
+  node_ip: __NODE_IP__
+
+keys:
+  __API_KEY__: __API_SECRET__
+
+# Embedded TURN. Off by default upstream; required for restrictive networks.
+turn:
+  enabled: __TURN_ENABLED__
+  domain: __TURN_DOMAIN__
+  udp_port: 3478
+  tls_port: 5349
+  # true when the L4 proxy terminates TLS for turn.<domain> on 443.
+  external_tls: __TURN_EXTERNAL_TLS__
+
+room:
+  auto_create: false
+  empty_timeout: 300
+  departure_timeout: 20
+
+logging:
+  level: info
+  json: true
+  sample: false
+
+webhook:
+  # Optional: point at the agent tier once webhook auth is wired up.
+  api_key: __API_KEY__

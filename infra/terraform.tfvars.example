@@ -1,0 +1,44 @@
+# Copy to terraform.tfvars and fill in. Never commit terraform.tfvars.
+
+prefix      = "fcmrobot"
+environment = "pilot"
+location    = "southeastasia"
+
+# --- Access ---------------------------------------------------------------
+admin_username       = "azureuser"
+admin_ssh_public_key = "ssh-ed25519 AAAA... you@laptop"
+
+# Tailscale uses the CGNAT range; no inbound NSG rule is required.
+vpn_admin_cidrs = ["100.64.0.0/10"]
+enable_wireguard = false
+# Short-lived. Also visible in instance metadata, so rotate it after bootstrap.
+tailscale_auth_key = ""
+
+# --- Compute --------------------------------------------------------------
+edge_vm_size  = "Standard_D2s_v5"
+agent_vm_size = "Standard_D4s_v5"
+agent_vm_count = 1
+
+# --- Domains --------------------------------------------------------------
+domain_api     = "api.example.com"
+domain_livekit = "livekit.example.com"
+domain_turn    = "turn.example.com"
+enable_turn    = true
+
+# --- Deployment source ----------------------------------------------------
+repo_url    = "https://github.com/your-org/fcm-robot.git"
+repo_branch = "main"
+
+# --- Data tier ------------------------------------------------------------
+postgres_sku       = "B_Standard_B1ms"
+postgres_storage_mb = 32768
+# Set to false once Terraform runs from inside the VNet.
+key_vault_public_access = true
+
+# --- Application ----------------------------------------------------------
+token_ttl_seconds    = 900
+rate_limit_per_minute = 10
+# Replace with per-device certificates before any real user.
+device_registry = "robot-001:change-me-robot-001"
+model_api_key   = ""
+alert_email     = "ops@example.com"

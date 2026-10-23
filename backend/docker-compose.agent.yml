@@ -1,0 +1,32 @@
+# Agent host (VM 2) production layout.
+# Started by cloud-init: docker compose --env-file /etc/fcm/agent.env -f docker-compose.agent.yml up -d
+#
+# No published ports: the worker registers outbound over WSS and joins rooms on
+# the private SFU address. PostgreSQL is the managed instance, not a container.
+
+name: fcm-agent
+
+services:
+  agent:
+    image: ${REGISTRY:-fcm}/agent:${IMAGE_TAG:-latest}
+    build:
+      context: ./agent
+    restart: unless-stopped
+    environment:
+      AGENT_NAME: ${AGENT_NAME:-fcm-agent}
+      LIVEKIT_URL: ${LIVEKIT_URL:?set LIVEKIT_URL to the private SFU address}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}
+      STT_MODEL: ${STT_MODEL:-gpt-4o-mini-transcribe}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      TTS_MODEL: ${TTS_MODEL:-gpt-4o-mini-tts}
+      TTS_VOICE: ${TTS_VOICE:-alloy}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-10}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+    deploy:
+      resources:
+        limits:
+          # Keeps a runaway session from starving the host (architecture.md §4.4).
+          cpus: "3.0"
+          memory: 6g

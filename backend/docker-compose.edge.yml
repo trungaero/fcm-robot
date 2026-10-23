@@ -1,0 +1,74 @@
+# Edge host (VM 1) production layout.
+# Started by cloud-init: docker compose --env-file /etc/fcm/edge.env -f docker-compose.edge.yml up -d
+#
+# Only the proxy publishes to the internet; every other port is either
+# internal to the compose network or restricted by the NSG.
+
+name: fcm-edge
+
+services:
+  livekit:
+    image: ${REGISTRY:-fcm}/livekit:${IMAGE_TAG:-latest}
+    build:
+      context: ./livekit
+      args:
+        LIVEKIT_VERSION: ${LIVEKIT_VERSION:-v1.9.0}
+    restart: unless-stopped
+    environment:
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET}
+      NODE_IP: ${NODE_IP:?set NODE_IP to the private address of this VM}
+      TURN_ENABLED: ${TURN_ENABLED:-true}
+      TURN_DOMAIN: ${TURN_DOMAIN:?set TURN_DOMAIN}
+      TURN_EXTERNAL_TLS: ${TURN_EXTERNAL_TLS:-true}
+    ports:
+      # Robots reach these directly when UDP is allowed; the NSG limits the source.
+      - "7881:7881"
+      - "7882:7882/udp"
+      - "3478:3478/udp"
+      # Agents register and signal over the private NIC (NSG rule allow-agent).
+      - "7880:7880"
+      # Metrics stay local.
+      - "127.0.0.1:6789:6789"
+      # 5349 is intentionally unpublished: the proxy reaches it on the compose network.
+    volumes:
+      - livekit-data:/var/lib/livekit
+
+  token-api:
+    image: ${REGISTRY:-fcm}/token-api:${IMAGE_TAG:-latest}
+    build:
+      context: ./token-api
+    restart: unless-stopped
+    environment:
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:?set LIVEKIT_PUBLIC_URL}
+      KEY_VAULT_URL: ${KEY_VAULT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      TOKEN_TTL_SECONDS: ${TOKEN_TTL_SECONDS:-900}
+      DEVICE_REGISTRY: ${DEVICE_REGISTRY:?set DEVICE_REGISTRY}
+      REVOKED_DEVICES: ${REVOKED_DEVICES:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-10}
+    depends_on:
+      - livekit
+
+  proxy:
+    image: ${REGISTRY:-fcm}/proxy:${IMAGE_TAG:-latest}
+    build:
+      context: ./proxy
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN}
+      LIVEKIT_DOMAIN: ${LIVEKIT_DOMAIN:?set LIVEKIT_DOMAIN}
+      TURN_DOMAIN: ${TURN_DOMAIN:?set TURN_DOMAIN}
+      TURN_UPSTREAM: livekit:5349
+      TOKEN_API_UPSTREAM: token-api:8080
+      LIVEKIT_UPSTREAM: livekit:7880
+    ports:
+      - "443:443"
+      - "80:80"
+    depends_on:
+      - livekit
+      - token-api
+
+volumes:
+  livekit-data:

@@ -1,0 +1,118 @@
+name: fcm-robot
+
+# Local / single-host layout.
+# - `docker compose up`            -> postgres + livekit + token-api + agent
+# - `docker compose --profile proxy up` -> adds the 443 SNI router (needs certs)
+#
+# Media note: for production, run the SFU with host networking or a UDP port
+# range; the bridge mapping below is for development only.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fcm
+      POSTGRES_USER: fcm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fcm_dev_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fcm -d fcm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  livekit:
+    build:
+      context: ./livekit
+      args:
+        LIVEKIT_VERSION: ${LIVEKIT_VERSION:-v1.9.0}
+    restart: unless-stopped
+    environment:
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
+      NODE_IP: ${NODE_IP:-127.0.0.1}
+      TURN_ENABLED: ${TURN_ENABLED:-false}
+      TURN_DOMAIN: ${TURN_DOMAIN:-turn.example.com}
+      TURN_EXTERNAL_TLS: ${TURN_EXTERNAL_TLS:-true}
+    ports:
+      - "7880:7880"        # signaling (public in prod only through the proxy)
+      - "7881:7881"        # ICE-TCP
+      - "7882:7882/udp"    # WebRTC media
+      - "3478:3478/udp"    # TURN over UDP
+      - "5349:5349/tcp"    # TURN over TLS (exposed as 443 by the proxy)
+      - "127.0.0.1:6789:6789"  # Prometheus
+    healthcheck:
+      test: ["CMD", "/livekit-server", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  token-api:
+    build:
+      context: ./token-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
+    ports:
+      - "8080:8080"
+    depends_on:
+      livekit:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status == 200 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  agent:
+    build:
+      context: ./agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
+      DATABASE_URL: postgresql://fcm:${POSTGRES_PASSWORD:-fcm_dev_password}@postgres:5432/fcm
+    depends_on:
+      livekit:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    # Worker registration is outbound WSS; no inbound ports are required.
+
+  # Optional: L4 SNI router that puts TURN/TLS on 443 next to HTTPS/WSS.
+  # Requires real certificates for the configured domains.
+  proxy:
+    profiles: ["proxy"]
+    build:
+      context: ./proxy
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-api.example.com}
+      LIVEKIT_DOMAIN: ${LIVEKIT_DOMAIN:-livekit.example.com}
+      TURN_DOMAIN: ${TURN_DOMAIN:-turn.example.com}
+      TURN_UPSTREAM: ${TURN_UPSTREAM:-livekit:5349}
+      TOKEN_API_UPSTREAM: ${TOKEN_API_UPSTREAM:-token-api:8080}
+      LIVEKIT_UPSTREAM: ${LIVEKIT_UPSTREAM:-livekit:7880}
+    ports:
+      - "443:443"
+      - "80:80"
+    depends_on:
+      - livekit
+      - token-api
+
+volumes:
+  pgdata:
